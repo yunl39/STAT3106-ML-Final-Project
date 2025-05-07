@@ -1,11 +1,42 @@
 # STAT3106-ML-Final-Project
 ## Summary
-## Explaination of the folders
-## Data source:
-Stock data is from the yahoo finance API
+## Explanation of the folders
+### 📂 Data Ingestion, Feature Generation & EDA
+#### 🧠 Reddit Data Processing
 
-Reddit Data:
-We used Reddit post data available through https://academictorrents.com/details/1614740ac8c94505e4ecb9d88be8bed7b6afddd4, which provides compressed .zst files containing full Reddit submissions. To parse these files, we followed the Python script provided in the PushshiftDumps GitHub repository (https://github.com/Watchful1/PushshiftDumps).
-From the dataset, we extracted posts from six finance-focused subreddits: r/investing, \r/stocks, r/wallstreetbets, r/StocksAndTrading, r/stockstobuytoday, and r/investingforbeginners. 
-We limited our extraction to posts created between January 1, 2022 and December 31, 2024. For each post, we collected the full text content, number of comments, score (an indicator of engagement and influence), upvote ratio, and the creation timestamp. The initial extraction yielded approximately 266,000 posts. However, many entries were incomplete or missing the full post content. To ensure data quality, we filtered out all posts lacking complete content, resulting in a final dataset of 92,237 high-quality posts. All subsequent analyses presented in this study are based on this cleaned and filtered dataset.
+- **`redditdata.ipynb`** and **`all_data.ipynb`**  
+  These notebooks parse raw Reddit `.zst` archives, filter for quality, and produce a cleaned dataset of ~92,000 posts across six finance-related subreddits. 
+#### 📉 Stock Data & EDA
+- **`stock&EDA.ipynb`**  
+  Retrieves historical stock price and volume data via the Yahoo Finance API. Also performs return diagnostics, quality checks, and basic EDA. Includes visualizations of returns and their correlation with Reddit sentiment features.
 
+#### 💬 Reddit Feature Engineering & EDA
+- **`Redditfeature&EDA.ipynb`**  
+  Generate Reddit-based features like daily sentiment scores (overall, sector, and firm-level) and mention frequencies. Performs EDA to examine trends, skewness, and potential predictive value of these features.
+---
+Each component is designed to support downstream modeling and analysis in a structured and reproducible way.
+
+## 📊 Data Sources
+
+### 📈 Stock Data
+Stock data was retrieved using the [Yahoo Finance API](https://finance.yahoo.com/), which includes historical stock prices, trading volume for the selected small-cap stocks.
+
+### 💬 Reddit Data
+Reddit post data was sourced from [Academic Torrents](https://academictorrents.com/details/1614740ac8c94505e4ecb9d88be8bed7b6afddd4), which provides compressed `.zst` files containing full Reddit submissions. We parsed these files using the Python scripts from the [PushshiftDumps GitHub repository](https://github.com/Watchful1/PushshiftDumps).
+
+We extracted posts from six finance-focused subreddits:
+- `r/investing`
+- `r/stocks`
+- `r/wallstreetbets`
+- `r/StocksAndTrading`
+- `r/stockstobuytoday`
+- `r/investingforbeginners`
+
+We restricted our dataset to posts created between **January 1, 2022** and **December 31, 2024**. For each post, we collected:
+- Full post content
+- Number of comments
+- Score (engagement metric)
+- Upvote ratio
+- Creation timestamp
+
+The initial extraction yielded approximately **266,000** posts. After filtering out entries with incomplete content, we retained **92,237** high-quality posts. All downstream analysis and modeling are based on this cleaned dataset.
