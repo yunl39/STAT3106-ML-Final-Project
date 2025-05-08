@@ -21,6 +21,13 @@ Each component is designed to support downstream modeling and analysis in a stru
 ### 📈 Stock Data
 Stock data was retrieved using the [Yahoo Finance API](https://finance.yahoo.com/), which includes historical stock prices, trading volume for the selected small-cap stocks.
 
+### 📈 Macroeconomic Indicators
+- **Expected Inflation (5-Year)**: [EXPINF5YR – Federal Reserve Bank of St. Louis](https://fred.stlouisfed.org/series/EXPINF5YR)  
+- **Federal Funds Rate**: [DFF – Federal Reserve Bank of St. Louis](https://fred.stlouisfed.org/series/DFF)  
+- **Real Gross Domestic Product (GDP)**: [GDPC1 – Federal Reserve Bank of St. Louis](https://fred.stlouisfed.org/series/GDPC1)  
+- **Consumer Price Index (CPI)**: [FRBC Economic Commentary](https://doi.org/10.26509/frbc-ec-201002)  
+- **Industrial Production Index**: [INDPRO – Federal Reserve Bank of St. Louis](https://fred.stlouisfed.org/series/INDPRO)
+
 ### 💬 Reddit Data
 Reddit post data was sourced from [Academic Torrents](https://academictorrents.com/details/1614740ac8c94505e4ecb9d88be8bed7b6afddd4), which provides compressed `.zst` files containing full Reddit submissions. We parsed these files using the Python scripts from the [PushshiftDumps GitHub repository](https://github.com/Watchful1/PushshiftDumps).
 
