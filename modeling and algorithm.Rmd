@@ -1,0 +1,418 @@
+---
+title: "Modeling Final Project"
+output: pdf_document
+date: "2025-05-04"
+---
+
+# Data loading:
+
+## Loading in the libraries:
+
+```{r loading_libraries}
+
+library(quantmod)
+library(dplyr)
+library(caret)
+library(glmnet)
+library(e1071)
+library(randomForest)
+library(gbm)
+library(pls)
+library(leaps)
+library(corrplot)
+library(zoo)
+library(TTR)
+library(ggplot2)
+library(patchwork)
+library(xgboost)
+
+
+```
+
+
+## loading in sentiment and macroeconomic data
+
+```{r}
+sentiment_data <- read.csv("all_features.csv")
+macro_data <- read.csv("macro_merged.csv")
+```
+
+```{r}
+sentiment_data$Date <- as.Date(sentiment_data$Date, format = "%Y-%m-%d")
+
+macro_data <- macro_data %>%
+  rename(Date = DATE) %>%
+  mutate(Date = as.Date(Date, format = "%Y-%m-%d"))
+
+merged_df <- sentiment_data %>% left_join(macro_data, by = "Date")
+
+head(merged_df)
+merged_df[is.na(merged_df)] <- 0
+head(merged_df)
+```
+
+
+## loading in the stock data
+
+```{r}
+
+
+tickers <- c("AEVA","ATRO","DRD","GRPN","NGVC","RDFN","ROOT","TDUP")
+from    <- as.Date("2022-01-01")
+to      <- as.Date("2024-12-31")
+
+getSymbols(tickers, from = from, to = to, auto.assign = TRUE)
+
+for (t in tickers) {
+  xts_obj <- get(t)
+  tmp     <- data.frame(Date = index(xts_obj), coredata(xts_obj))
+
+  # Price (use Adjusted, else Close)
+  adj_col   <- paste0(t, ".Adjusted")
+  close_col <- paste0(t, ".Close")
+  tmp$Price <- if (adj_col   %in% names(tmp)) tmp[[adj_col]] 
+               else tmp[[close_col]]
+
+  # daily return
+  tmp$Return <- c(NA, diff(tmp$Price) / head(tmp$Price, -1))
+
+  # Price_lead is the Price of the next day
+  tmp$Price_lead    <- lead(tmp$Price, 1)
+
+  # return tomorrow (binary and continuous)
+  tmp$Return.binary <- (tmp$Price_lead - tmp$Price) / tmp$Price
+  tmp$Direction     <- ifelse(tmp$Return.binary > 0, 1, 0)
+
+  # 7-day rolling std dev of returns
+  tmp$Volatility7d <- runSD(tmp$Return, n = 7)
+
+  # volume and volume change
+  vol_col            <- paste0(t, ".Volume")
+  tmp$Volume         <- if (vol_col %in% names(tmp)) tmp[[vol_col]] else NA
+  tmp$VolumeChange   <- c(NA, diff(tmp$Volume))
+
+  # Keep whatever columns you need:
+  keep_cols <- c(
+    "Date","Price","Return","Price_lead",
+    "Return.binary","Direction","Volatility7d",
+    "Volume","VolumeChange"
+  )
+  tmp <- tmp[, keep_cols]
+
+  # Assign to a dataframe named df_<TICKER>
+  assign(paste0("df_", t), tmp, envir = .GlobalEnv)
+}
+```
+
+
+## create full data tables
+
+```{r}
+for (t in tickers) {
+  # build the names
+  df_name       <- paste0("df_", t)
+  full_df_name  <- paste0("df_", t, "_full")
+  
+  # pull in the ticker‐specific df
+  tmp <- get(df_name)
+  
+  # merge on Date, keeping every row in merged_data
+  merged_tmp <- merge(
+    merged_df,
+    tmp,
+    by     = "Date",
+    all.x  = TRUE,
+    suffixes = c("", paste0("_", t))
+  )
+  
+  merged_tmp <- na.omit(merged_tmp)
+  
+  # assign back into your global env
+  assign(full_df_name, merged_tmp, envir = .GlobalEnv)
+}
+
+```
+
+
+## looking at full data tables
+
+```{r}
+head(df_AEVA_full)
+colnames(df_AEVA_full)
+```
+
+
+
+# Model Train and Test
+
+## Train and test split
+```{r}
+# splitting for 80% train, 20% test
+train_size <- floor(0.8 * nrow(df_AEVA_full))
+
+train_data <- df_AEVA_full[1:train_size, ]
+test_data  <- df_AEVA_full[(train_size + 1):nrow(df_AEVA_full), ]
+
+
+# Define predictors
+predictor_vars <- setdiff(names(df_AEVA_full), c("Date", "Price_lead"))
+
+#these are for regression models (OLS, PCA, lasso, ridge)
+X_train <- as.matrix(train_data[, predictor_vars])
+y_train <- train_data$Price_lead
+X_test  <- as.matrix(test_data[, predictor_vars])
+y_test  <- test_data$Price_lead
+
+```
+
+
+
+```{r}
+library(caret)
+library(randomForest)
+library(xgboost)
+library(glmnet)
+
+tickers <- c("AEVA","ATRO","DRD","GRPN","NGVC","RDFN","ROOT","TDUP")
+set.seed(123)
+
+# storage
+results   <- data.frame(Ticker=character(), RF_RMSE=numeric(), XGB_RMSE=numeric(), ENET_RMSE=numeric(), EndingBudget=numeric(), stringsAsFactors=FALSE)
+rf_models   <- list(); xgb_models  <- list(); enet_models <- list()
+
+
+
+# debugging
+
+
+# ———— First loop: fit & evaluate RMSE ————
+for (t in tickers) {
+  # 1) pull full data & drop NAs
+  df_full <- get(paste0("df_", t, "_full")) %>% na.omit()
+  
+  # 2) carve out eval set for 2024-12-01 to 2024-12-31
+  df_eval <- subset(
+    df_full,
+    Date >= as.Date("2024-12-01") &
+    Date <= as.Date("2024-12-31")
+  )
+  assign(paste0("df_", t, "_eval"), df_eval, envir = .GlobalEnv)
+  
+  # 3) remaining data for train/test
+  df_rt <- subset(
+    df_full,
+    !(Date >= as.Date("2024-12-01") &
+      Date <= as.Date("2024-12-31"))
+  )
+  
+  # 4) 80/20 split on df_rt
+  n_rt       <- nrow(df_rt)
+  train_size <- floor(0.8 * n_rt)
+  train_df   <- df_rt[     1:train_size, ]
+  test_df    <- df_rt[(train_size+1):n_rt, ]
+  
+  # 5) pick only numeric predictors (dropping Date & target)
+  numeric_cols <- names(train_df)[sapply(train_df, is.numeric)]
+  feats        <- setdiff(numeric_cols, "Price_lead")
+  
+  # 6) drop near-zero‐variance from train (and mirror on test)
+  X_tr_raw <- as.matrix(train_df[, feats, drop=FALSE])
+  nzv      <- nearZeroVar(X_tr_raw)
+  if (length(nzv) > 0) {
+    feats <- feats[-nzv]
+  }
+  
+  #nzv
+  
+  if(length(nzv)) feats <- feats[-nzv]
+  
+  numeric_cols <- names(train_df)[sapply(train_df, is.numeric)]
+  feats <- setdiff(numeric_cols, "Price_lead")
+  
+  
+  X_train    <- as.matrix(train_df[, feats])
+  y_train <- train_df$Price_lead
+  
+  X_test     <- as.matrix(test_df[,  feats])
+  y_test  <- test_df$Price_lead
+  
+  
+  #any(is.infinite(X_train))
+  
+  # RFis.infinite()# RF
+  rf_mod     <- randomForest(x=X_train, y=y_train)
+  rf_pred    <- predict(rf_mod, newdata=X_test)
+  rf_rmse    <- sqrt(mean((rf_pred - y_test)^2))
+  rf_models[[t]] <- rf_mod
+  
+  # XGB
+  dtr        <- xgb.DMatrix(X_train, label=y_train)
+  dte        <- xgb.DMatrix(X_test,  label=y_test)
+  xgb_mod    <- xgb.train(list(objective="reg:squarederror", eval_metric="rmse"), dtr, nrounds=100, verbose=0)
+  xgb_pred   <- predict(xgb_mod, dte)
+  xgb_rmse   <- sqrt(mean((xgb_pred - y_test)^2))
+  xgb_models[[t]] <- xgb_mod
+  
+  # ENET
+  cv_enet    <- cv.glmnet(X_train, y_train, alpha=0.5, nfolds=5, standardize=TRUE)
+  enet_mod   <- glmnet(X_train, y_train, alpha=0.5, lambda=cv_enet$lambda.min, standardize=TRUE)
+  enet_pred  <- predict(enet_mod, newx = X_test)
+  enet_rmse  <- sqrt(mean((enet_pred - y_test)^2))
+  enet_models[[t]] <- enet_mod
+  
+  # store RMSEs
+  results[nrow(results)+1, 1:4] <- list(t, rf_rmse, xgb_rmse, enet_rmse)
+
+}
+
+# Print the RMSE table
+
+cat("=== RMSE Comparison Across Models ===\n")
+print(results)
+cat("\n")
+```
+
+
+
+
+
+
+```{r}
+
+# ———— Second loop: pick best & simulate trading ————
+library(caret)
+library(xgboost)
+
+# storage for your simulation results
+results$EndingBudget <- NA_real_
+
+
+
+# debugging
+
+
+for(i in seq_len(nrow(results))) {
+  t        <- results$Ticker[i]
+  rmses    <- as.numeric(results[i, c("RF_RMSE","XGB_RMSE","ENET_RMSE")])
+  best_idx <- which.min(rmses)
+  best_mod <- switch(best_idx,
+                     rf_models[[t]],
+                     xgb_models[[t]],
+                     enet_models[[t]])
+                     
+  # rebuild df and split
+  df       <- get(paste0("df_", t, "_full")) %>% na.omit()
+  
+  # figure out which features were kept (drop near‐zero var in train)
+  all_feats   <- setdiff(names(df), c("Date","Price_lead","sentiment_label"))
+  X_tr_raw    <- as.matrix(train_df[, all_feats, drop=FALSE])
+  nzv         <- nearZeroVar(X_tr_raw)
+  feats_keep  <- if(length(nzv)) all_feats[-nzv] else all_feats
+  
+  numeric_cols <- names(df)[sapply(df, is.numeric)]
+  feats_keep <- setdiff(feats_keep, "Price_lead")
+  
+  feats_keep
+  
+  # retrain model on full data 
+  X_full    <- as.matrix(df[, feats_keep])
+  
+  
+  temp_mod = ''
+  
+  if (best_idx == 1) {
+  # random forest is best
+    temp_mod     <- randomForest(x=X_full, y=df$Price_lead)
+    X_eval <- get(paste0("df_", t, "_eval")) %>% na.omit()
+  } else if (best_idx == 2) {
+  # xgb is best 
+    df_eval <- get(paste0("df_", t, "_eval")) %>% na.omit()
+  
+    # 2) build a pure numeric matrix of the same features you trained on
+    X_eval_mat <- as.matrix(df_eval[, feats_keep, drop = FALSE])
+    
+    # 3) extract the true next‐day price vector
+    y_eval     <- df_eval$Price_lead
+    
+    # 4) make your DMatrix
+    X_eval <- xgb.DMatrix(data = X_eval_mat, label = y_eval)
+    
+    # 5) train your xgboost model on full data, storing the Booster in temp_mod
+    dtrain_full <- xgb.DMatrix(data = X_full, label = df$Price_lead)
+    temp_mod <- xgb.train(
+      params   = list(objective   = "reg:squarederror",
+                      eval_metric = "rmse"),
+      data     = dtrain_full,
+      nrounds  = 100,
+      verbose  = 0
+    )
+    
+  } else if (best_idx == 3) {
+    # enet is best
+    cv_enet    <- cv.glmnet(X_full, df$Price_lead, alpha=0.5, nfolds=5, standardize=TRUE)
+    temp_mod   <- glmnet(X_full, df$Price_lead, alpha=0.5, lambda=cv_enet$lambda.min, standardize=TRUE)
+    df_eval  <- get(paste0("df_", t, "_eval")) %>% na.omit()
+    X_eval   <- as.matrix(df_eval[, feats_keep, drop = FALSE])
+  }
+  
+  
+  
+  # run predictions
+  eval_pred <- predict(temp_mod, X_eval)
+  
+  
+  df_eval  <- get(paste0("df_", t, "_eval")) %>% na.omit()
+  col_to_add <- "prediction"
+  eval_vec <- as.numeric(eval_pred)
+  df_eval[[col_to_add]] <- unname(eval_vec)
+  assign(
+    paste0("df_", t, "_eval"),
+    df_eval,
+    envir = .GlobalEnv
+  )
+}
+
+# simulate the trading path
+
+for(i in seq_len(nrow(results))) {
+  t        <- results$Ticker[i]
+  df       <- get(paste0("df_", t, "_eval")) %>% na.omit()
+  
+  df$pred_direction <- ifelse(df$prediction > df$Price, 1, 0)
+  df$return_from_pred <- ifelse(df$Direction == df$pred_direction,abs(df$Return.binary),-abs(df$Return.binary))
+  
+  budget = 1000
+  for (r in df$return_from_pred) {
+    budget = budget*(1+r)
+  }
+  
+  results$EndingBudget[i] <- budget
+  
+}
+
+
+cat(sprintf(" → Ending budget: $%.2f\n\n", budget))
+
+print(results)
+
+profit <- results %>%
+  summarize(total = sum(EndingBudget, na.rm = TRUE))
+
+# And to pull it out as a number:
+total_profit <- profit$total
+total_profit
+
+
+```
+
+
+
+
+
+
+
+
+
+
+
+
