@@ -1,7 +1,6 @@
 # STAT3106-ML-Final-Project
 ## Summary
-This project explores the use of Reddit sentiment data and financial indicators to predict the daily return direction of small-cap stocks from 2022 to 2024. We implemented machine learning models including Random Forest, XGBoost, and Elastic Net, using a variety of features such as Reddit sentiment scores, macroeconomic indicators, and technical stock metrics. Despite extensive experimentation, the models achieved only modest predictive accuracy (55–65%). A simulated trading strategy based on the model reduced losses compared to random guessing, although it did not yield profits. This work highlights the need for more robust sentiment features and improved alignment between social discourse and market outcomes.
-
+This project explores the use of Reddit sentiment data and financial indicators to predict the daily return direction of small-cap stocks from 2022 to 2024. We implemented machine learning models including Random Forest, XGBoost, and Elastic Net, using a variety of features such as Reddit sentiment scores, macroeconomic indicators, and technical stock metrics. Despite extensive experimentation, the models achieved only modest predictive accuracy (60–70%). A simulated trading strategy based on the model achieved a profit and outperformed random guessing. This suggests the model captures some useful signals, though further improvements in feature quality and market alignment are needed.
 ## Explanation of the folders
 ### 📂 Data Ingestion, Feature Generation & EDA
 #### 🧠 Reddit Data Processing
